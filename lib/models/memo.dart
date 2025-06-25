@@ -37,7 +37,7 @@ class Memo {
       timestamp: map['timestamp'] as String,
       tag: map['tag'] as String?,
       reminderTime: map['reminderTime'] != null
-          ? DateTime.parse(map['reminderTime'] as String)
+          ? DateTime.parse(map['reminderTime'])
           : null,
       isDeleted: (map['isDeleted'] as int) == 1,
     );

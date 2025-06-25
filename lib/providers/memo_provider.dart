@@ -15,6 +15,22 @@ class MemoNotifier extends StateNotifier<List<Memo>> {
     state = await DatabaseHelper.instance.getMemos();
   }
 
+  Future<Memo> addMemoAndReturn(Memo memo) async {
+    final db = await DatabaseHelper.instance.database;
+    final id = await db.insert('memos', memo.toMap());
+    final newMemo = Memo(
+      id: id,
+      title: memo.title,
+      content: memo.content,
+      timestamp: memo.timestamp,
+      tag: memo.tag,
+      reminderTime: memo.reminderTime,
+      isDeleted: memo.isDeleted,
+    );
+    await loadMemos();
+    return newMemo;
+  }
+
   Future<void> addMemo(Memo memo) async {
     await DatabaseHelper.instance.insertMemo(memo);
     await loadMemos();

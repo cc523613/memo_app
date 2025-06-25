@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import '../models/database.dart';
 import '../providers/memo_provider.dart';
 import '../providers/theme_provider.dart';
 import '../models/memo.dart';
@@ -72,14 +73,77 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
     }
   }
 
+  void _showTagManagementDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Consumer(
+        builder: (context, ref, child) {
+          final tagsAsync = ref.watch(memoProvider.notifier).getTags();
+          return AlertDialog(
+            title: const Text('管理标签'),
+            content: FutureBuilder<List<String>>(
+              future: tagsAsync,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const CircularProgressIndicator();
+                }
+                final tags = snapshot.data!.where((tag) => tag != '无标签').toList();
+                if (tags.isEmpty) {
+                  return const Text('暂无标签');
+                }
+                return SizedBox(
+                  width: double.maxFinite,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: tags.length,
+                    itemBuilder: (context, index) {
+                      final tag = tags[index];
+                      return ListTile(
+                        title: Text(tag),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () async {
+                            final db = await DatabaseHelper.instance.database;
+                            await db.update(
+                              'memos',
+                              {'tag': null},
+                              where: 'tag = ?',
+                              whereArgs: [tag],
+                            );
+                            ref.read(memoProvider.notifier).loadMemos();
+                            if (ref.read(tagFilterProvider) == tag) {
+                              ref.read(tagFilterProvider.notifier).state = null;
+                            }
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final memos = ref.watch(memoProvider);
     final tagFilter = ref.watch(tagFilterProvider);
     final tagsAsync = ref.watch(memoProvider.notifier).getTags();
-    final filteredMemos = tagFilter != null && tagFilter != '无标签'
-        ? memos.where((memo) => memo.tag == tagFilter).toList()
-        : memos;
+    final filteredMemos = tagFilter == null
+        ? memos
+        : tagFilter == '无标签'
+        ? memos.where((memo) => memo.tag == null).toList()
+        : memos.where((memo) => memo.tag == tagFilter).toList();
     final sortedMemos = _sortMemos(filteredMemos);
 
     return Scaffold(
@@ -91,7 +155,7 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => RecycleBinPage()),
+                MaterialPageRoute(builder: (context) => const RecycleBinPage()),
               );
             },
             tooltip: '回收站',
@@ -112,6 +176,11 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
             icon: const Icon(Icons.save_alt),
             onPressed: () => _exportMemos(memos),
             tooltip: '导出备忘录',
+          ),
+          IconButton(
+            icon: const Icon(Icons.label),
+            onPressed: _showTagManagementDialog,
+            tooltip: '管理标签',
           ),
           PopupMenuButton<SortOption>(
             icon: const Icon(Icons.sort),
@@ -174,16 +243,12 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
                   hint: const Text('选择标签'),
                   value: tagFilter,
                   isExpanded: true,
-                  items: [
-                    const DropdownMenuItem<String>(
-                      value: null,
-                      child: Text('全部'),
-                    ),
-                    ...snapshot.data!.map((tag) => DropdownMenuItem<String>(
-                      value: tag,
-                      child: Text(tag),
-                    )),
-                  ],
+                  items: snapshot.data!
+                      .map((tag) => DropdownMenuItem<String>(
+                    value: tag,
+                    child: Text(tag),
+                  ))
+                      .toList(),
                   onChanged: (value) {
                     ref.read(tagFilterProvider.notifier).state = value;
                   },
@@ -236,7 +301,7 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => AddMemoPage(memo: memo, onSave: (Memo ) {  },),
+                          builder: (context) => AddMemoPage(memo: memo),
                         ),
                       );
                     },
@@ -285,7 +350,7 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
         onPressed: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => AddMemoPage(onSave: (Memo ) {  },)),
+            MaterialPageRoute(builder: (context) => const AddMemoPage()),
           );
         },
         child: const Icon(Icons.add),

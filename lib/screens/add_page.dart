@@ -6,11 +6,12 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import '../providers/memo_provider.dart';
 import '../models/memo.dart';
+import '../models/database.dart';
 
 class AddMemoPage extends ConsumerStatefulWidget {
   final Memo? memo;
 
-  const AddMemoPage({super.key, this.memo, required Null Function(dynamic Memo) onSave});
+  const AddMemoPage({super.key, this.memo});
 
   @override
   ConsumerState<AddMemoPage> createState() => _AddMemoPageState();
@@ -26,7 +27,7 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
   @override
   void initState() {
     super.initState();
-    tz.initializeTimeZones(); // Initialize timezone data
+    tz.initializeTimeZones();
     if (widget.memo != null) {
       _titleController.text = widget.memo!.title;
       _contentController.text = widget.memo!.content;
@@ -47,25 +48,23 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
       android: androidSettings,
       iOS: iosSettings,
     );
-    await _notificationsPlugin.initialize(settings);
-    // Request permissions for iOS
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>()
-        ?.requestPermissions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-    // Request permissions for Android 13+
-    await _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+    try {
+      await _notificationsPlugin.initialize(settings);
+      await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+      await _notificationsPlugin
+          .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+    } catch (e) {
+      debugPrint('通知初始化失败: $e');
+    }
   }
 
   Future<void> _scheduleNotification(Memo memo) async {
-    if (memo.reminderTime == null) return;
+    if (memo.reminderTime == null || memo.id == null) return;
     final androidDetails = const AndroidNotificationDetails(
       'memo_channel',
       'Memo Reminders',
@@ -78,22 +77,37 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
       android: androidDetails,
       iOS: iosDetails,
     );
-    await _notificationsPlugin.zonedSchedule(
-      memo.id ?? DateTime.now().millisecondsSinceEpoch,
-      memo.title,
-      memo.content.length > 50
-          ? '${memo.content.substring(0, 47)}...'
-          : memo.content,
-      tz.TZDateTime.from(memo.reminderTime!, tz.local),
-      notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    try {
+      await _notificationsPlugin.zonedSchedule(
+        memo.id!,
+        memo.title,
+        memo.content.length > 50
+            ? '${memo.content.substring(0, 47)}...'
+            : memo.content,
+        tz.TZDateTime.from(memo.reminderTime!, tz.local),
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
+      );
+      debugPrint('通知已调度: ID=${memo.id}, 时间=${memo.reminderTime}');
+    } catch (e) {
+      debugPrint('通知调度失败: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('通知设置失败: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _cancelNotification(int id) async {
-    await _notificationsPlugin.cancel(id);
+    try {
+      await _notificationsPlugin.cancel(id);
+      debugPrint('通知已取消: ID=$id');
+    } catch (e) {
+      debugPrint('通知取消失败: $e');
+    }
   }
 
   Future<void> _selectReminderTime() async {
@@ -137,50 +151,71 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
               _titleController.clear();
               _contentController.clear();
               _tagController.clear();
-              setState(() {
-                _reminderTime = null;
-              });
+              setState(() { _reminderTime = null; });
             },
             tooltip: '清除输入',
           ),
           IconButton(
             icon: const Icon(Icons.save),
             onPressed: () async {
-              if (_titleController.text.isEmpty ||
-                  _contentController.text.isEmpty) {
+              final title = _titleController.text.trim();
+              final content = _contentController.text.trim();
+              if (title.isEmpty || content.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('请输入标题和内容')),
                 );
                 return;
               }
+              final normalizedTag = _tagController.text.trim().toLowerCase();
               final memo = Memo(
                 id: widget.memo?.id,
-                title: _titleController.text,
-                content: _contentController.text,
-                timestamp: widget.memo?.timestamp ?? DateTime.now().toString(),
-                tag: _tagController.text.isEmpty ? null : _tagController.text,
+                title: title,
+                content: content,
+                timestamp: DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
+                tag: normalizedTag.isEmpty ? null : normalizedTag,
                 reminderTime: _reminderTime,
+                isDeleted: false,
               );
-              if (widget.memo != null) {
-                if (widget.memo!.reminderTime != null) {
-                  await _cancelNotification(widget.memo!.id!);
+
+              try {
+                debugPrint('保存备忘录: ${memo.toMap()}');
+                if (widget.memo != null) {
+                  // 更新现有备忘录
+                  if (widget.memo!.reminderTime != null) {
+                    await _cancelNotification(widget.memo!.id!);
+                  }
+                  await ref.read(memoProvider.notifier).updateMemo(memo);
+                  if (_reminderTime != null) {
+                    await _scheduleNotification(memo);
+                  }
+                } else {
+                  // 插入新备忘录
+                  final newMemo = await ref.read(memoProvider.notifier).addMemoAndReturn(memo);
+                  if (_reminderTime != null) {
+                    await _scheduleNotification(newMemo);
+                  }
                 }
-                ref.read(memoProvider.notifier).updateMemo(memo);
-              } else {
-                ref.read(memoProvider.notifier).addMemo(memo);
-              }
-              if (_reminderTime != null) {
-                await _scheduleNotification(memo);
-              }
-              if (context.mounted) {
-                Navigator.pop(context);
+                if (context.mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('备忘录已保存')),
+                  );
+                }
+              } catch (e) {
+                debugPrint('保存失败: $e');
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('保存失败: $e')),
+                  );
+                }
               }
             },
+            tooltip: '保存',
           ),
         ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -189,45 +224,66 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
               decoration: const InputDecoration(
                 labelText: '标题',
                 hintText: '请输入备忘录标题',
+                border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 16),
+            TextField(
+              controller: _tagController,
+              decoration: InputDecoration(
+                labelText: '标签',
+                hintText: '输入标签（如：工作）',
+                border: const OutlineInputBorder(),
+                suffixIcon: _tagController.text.isNotEmpty
+                    ? IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    _tagController.clear();
+                    setState(() {});
+                  },
+                )
+                    : null,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
             FutureBuilder<List<String>>(
               future: tagsAsync,
               builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Text('加载标签失败: ${snapshot.error}');
+                }
                 final tags = snapshot.data ?? ['无标签'];
-                return Autocomplete<String>(
-                  optionsBuilder: (textEditingValue) {
-                    if (textEditingValue.text.isEmpty) return tags;
-                    return tags.where((tag) => tag
-                        .toLowerCase()
-                        .contains(textEditingValue.text.toLowerCase()));
-                  },
-                  onSelected: (selection) {
-                    _tagController.text = selection;
-                  },
-                  fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
-                    _tagController.text = controller.text;
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: const InputDecoration(
-                        labelText: '标签',
-                        hintText: '例如：工作、生活',
-                      ),
-                      onSubmitted: (_) => onSubmitted(),
-                    );
-                  },
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: tags
+                      .where((tag) => tag != '无标签')
+                      .map((tag) => ChoiceChip(
+                    label: Text(tag),
+                    selected: _tagController.text.trim().toLowerCase() == tag,
+                    onSelected: (selected) {
+                      setState(() {
+                        _tagController.text = selected ? tag : '';
+                      });
+                    },
+                  ))
+                      .toList(),
                 );
               },
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                Text(
-                  '提醒时间: ${_reminderTime != null ? DateFormat('yyyy-MM-dd HH:mm').format(_reminderTime!) : '未设置'}',
+                Expanded(
+                  child: Text(
+                    '提醒时间: ${_reminderTime != null ? DateFormat('yyyy-MM-dd HH:mm').format(_reminderTime!) : '未设置'}',
+                    style: const TextStyle(fontSize: 16),
+                  ),
                 ),
-                const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.alarm),
                   onPressed: _selectReminderTime,
@@ -237,9 +293,7 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
                   IconButton(
                     icon: const Icon(Icons.clear),
                     onPressed: () {
-                      setState(() {
-                        _reminderTime = null;
-                      });
+                      setState(() { _reminderTime = null; });
                     },
                     tooltip: '取消提醒',
                   ),
@@ -255,11 +309,12 @@ class _AddMemoPageState extends ConsumerState<AddMemoPage> {
               child: TextField(
                 controller: _contentController,
                 maxLines: null,
-                keyboardType: TextInputType.multiline,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
                 decoration: const InputDecoration(
                   hintText: '请输入备忘录内容',
+                  border: OutlineInputBorder(),
                 ),
-                autofocus: true,
               ),
             ),
           ],
