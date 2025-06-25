@@ -1,26 +1,46 @@
 import 'package:flutter/material.dart';
-import 'home_page.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'providers/theme_provider.dart';
+import 'screens/home_page.dart';
 
-class MemoApp extends StatelessWidget {
+class MemoApp extends ConsumerWidget {
+  const MemoApp({super.key});
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeProvider);
     return MaterialApp(
-      title: '简单备忘录',
+      title: '备忘录',
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
-        cardTheme: CardTheme(
-          elevation: 4.0,
+        useMaterial3: true,
+        cardTheme: const CardTheme(
+          elevation: 4,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10.0),
+            borderRadius: BorderRadius.all(Radius.circular(10)),
           ),
-          margin: EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+          margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         ),
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           border: OutlineInputBorder(),
-          contentPadding: EdgeInsets.all(12.0),
+          contentPadding: EdgeInsets.all(12),
         ),
       ),
+      darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
+        primaryColor: Colors.blue,
+        cardTheme: const CardTheme(
+          elevation: 4,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(10)),
+          ),
+          margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        ),
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.all(12),
+        ),
+      ),
+      themeMode: themeMode,
       home: MemoHomePage(),
     );
   }

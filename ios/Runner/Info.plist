@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+    <string>允许应用在调试模式下与开发工具通信。</string>
 </dict>
 </plist>
