@@ -85,7 +85,7 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
               future: tagsAsync,
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
-                  return const CircularProgressIndicator();
+                  return const Center(child: CircularProgressIndicator());
                 }
                 final tags = snapshot.data!.where((tag) => tag != '无标签').toList();
                 if (tags.isEmpty) {
@@ -113,6 +113,9 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
                             ref.read(memoProvider.notifier).loadMemos();
                             if (ref.read(tagFilterProvider) == tag) {
                               ref.read(tagFilterProvider.notifier).state = null;
+                            }
+                            if (context.mounted) {
+                              Navigator.pop(context);
                             }
                           },
                         ),
@@ -235,25 +238,42 @@ class _MemoHomePageState extends ConsumerState<MemoHomePage> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: FutureBuilder<List<String>>(
-              future: tagsAsync,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const SizedBox();
-                return DropdownButton<String>(
-                  hint: const Text('选择标签'),
-                  value: tagFilter,
-                  isExpanded: true,
-                  items: snapshot.data!
-                      .map((tag) => DropdownMenuItem<String>(
-                    value: tag,
-                    child: Text(tag),
-                  ))
-                      .toList(),
-                  onChanged: (value) {
-                    ref.read(tagFilterProvider.notifier).state = value;
-                  },
-                );
-              },
+            child: Row(
+              children: [
+                Expanded(
+                  child: FutureBuilder<List<String>>(
+                    future: tagsAsync,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const SizedBox();
+                      }
+                      final tags = ['全部', ...snapshot.data!];
+                      return DropdownButton<String>(
+                        hint: const Text('选择标签'),
+                        value: tagFilter,
+                        isExpanded: true,
+                        items: tags.map((tag) {
+                          return DropdownMenuItem<String>(
+                            value: tag == '全部' ? null : tag,
+                            child: Text(tag),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          ref.read(tagFilterProvider.notifier).state = value;
+                        },
+                      );
+                    },
+                  ),
+                ),
+                if (tagFilter != null)
+                  IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      ref.read(tagFilterProvider.notifier).state = null;
+                    },
+                    tooltip: '清除筛选',
+                  ),
+              ],
             ),
           ),
           Expanded(
